@@ -1,16 +1,12 @@
-import os
+from pathlib import Path
 
 import numpy as np
-from sty import bg, ef, fg, rs
+from sty import ef, fg, rs
 from torchvision.datasets import ImageFolder
 
 
 class MyImageFolder(ImageFolder):
-    """Selectively read training data:
-    data_train = MyImageFolder(root=str(Path("data") / "data_train"), name_classes=corpus[:10])
-    Args:
-        ImageFolder (ImageFolder): ImageFolder class from torch vision
-    """
+    """selectively loads training data for specified class names."""
 
     def __init__(self, name_classes=None, verbose=True, *args, **kwargs):
         print(fg.red + ef.inverse + "ROOT:  " + kwargs["root"] + rs.inverse + rs.fg)
@@ -18,13 +14,13 @@ class MyImageFolder(ImageFolder):
         self.verbose = verbose
         super().__init__(*args, **kwargs)
 
-    def find_classes(self, dir: str):
+    def find_classes(self, directory: str):
+        """finds classes matching name_classes in the given directory."""
         if self.name_classes is None:
-            return super().find_classes(dir)
-        else:
-            classes = [d.name for d in os.scandir(dir) if d.is_dir() and (d.name in self.name_classes)]
-            classes.sort()
-            class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+            return super().find_classes(directory)
+        classes = [d.name for d in Path(directory).iterdir() if d.is_dir() and (d.name in self.name_classes)]
+        classes.sort()
+        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
         return classes, class_to_idx
 
     def __getitem__(self, index):

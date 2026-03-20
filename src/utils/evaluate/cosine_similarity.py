@@ -1,10 +1,11 @@
 import torch
-from torch import nn
-from torch.functional import Tensor
+import torch.nn.functional as F
+from torch import Tensor
 
 
-def compute_cosine_similarity(vectors: tuple[Tensor], dimension=1) -> Tensor:
-    return float(nn.CosineSimilarity(dim=dimension, eps=1e-8)(*vectors))
+def compute_cosine_similarity(vectors: tuple[Tensor], dimension=1) -> float:
+    """compute cosine similarity between two tensors along the given dimension."""
+    return float(F.cosine_similarity(vectors[0], vectors[1], dim=dimension))
 
 
 if __name__ == "__main__":

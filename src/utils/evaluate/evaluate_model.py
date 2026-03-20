@@ -1,138 +1,110 @@
-import platform
+from pathlib import Path
 
-# from torchvision.models.feature_extraction import create_feature_extractor, get_graph_node_names
 from utils.evaluate.cosine_similarity import compute_cosine_similarity
 
 
+def build_image_index(prime_data) -> dict[tuple[str, str], int]:
+    """build a lookup dict mapping (word, prime_type) to dataset index."""
+    index = {}
+    for idx, (path_str, _label) in enumerate(prime_data.imgs):
+        p = Path(path_str).with_suffix("")
+        word = p.parent.name
+        prime_type = p.name
+        index[(word, prime_type)] = idx
+    return index
+
+
 class Evaluate:
-    """_summary_
-    Input: model + which word + prime_types + which layer
-    Output: cosine similarity
-    e.g.,
+    """compute cosine similarity between prime activations for a word pair."""
 
-    pnasnet = timm.create_model("pnasnet5large", pretrained=True, num_classes=1000)
-    evaluate = Evaluate(model=pnasnet)
-    evaluate.main(word="abduct", prime_types=("ID", "SN-F"), which_layer="penultimate")
-
-    returns cosine similarity
-
-    """
-
-    def __init__(self, model, word: str, prime_types: tuple[str], which_layer: str, prime_data):
+    def __init__(self, model, word: str, prime_types: tuple[str], which_layer: str,
+                 prime_data, image_index: dict, device: str = "cpu"):
         self.model = model
         self.word = word
         self.prime_types = prime_types
         self.which_layer = which_layer
         self.prime_data = prime_data
-        self.get_image_tensor()
+        self.image_index = image_index
+        self.device = device
+        self.activation = {}
+        self._get_image_tensor()
 
-    def get_image_tensor(self):
-        image_label_prime: list[list] = [
-            i[0].replace(".png", "").split(("/" if platform.system() != "Windows" else "\\"))[2::]
-            for i in self.prime_data.imgs
-        ]
-        # print(image_label_prime)
-        image_indices: tuple[int] = (
-            image_label_prime.index([self.word, self.prime_types[0]]),
-            image_label_prime.index([self.word, self.prime_types[1]]),
-        )
+    def _get_image_tensor(self):
+        """load and prepare input tensors for the two prime types."""
+        idx_0 = self.image_index[(self.word, self.prime_types[0])]
+        idx_1 = self.image_index[(self.word, self.prime_types[1])]
         self.tensors = (
-            self.prime_data[image_indices[0]][0].unsqueeze(0).cuda().detach(),
-            self.prime_data[image_indices[1]][0].unsqueeze(0).cuda().detach(),
+            self.prime_data[idx_0][0].unsqueeze(0).to(self.device).detach(),
+            self.prime_data[idx_1][0].unsqueeze(0).to(self.device).detach(),
         )
-
-    def compute_similarity_node_wise(self):
-        if self.which_layer == "classification":
-            outputs = (self.model(self.tensors[0]), self.model(self.tensors[1]))
-            similarity = compute_cosine_similarity(outputs)
-            return similarity
-
-        elif self.which_layer == "penultimate":
-            which_layer = -3
-            nodes, _ = get_graph_node_names(self.model)
-            feature_extractor = create_feature_extractor(model=self.model, return_nodes=[nodes[which_layer]])
-            outputs = (
-                feature_extractor(self.tensors[0])[nodes[which_layer]],
-                feature_extractor(self.tensors[1])[nodes[which_layer]],
-            )
-            similarity = compute_cosine_similarity(outputs)
-            return similarity
 
     def compute_similarity_layer_wise(self):
-        if self.which_layer == "classification":
-            outputs = (self.model(self.tensors[0]), self.model(self.tensors[1]))
-            similarity = compute_cosine_similarity(outputs)
-            return similarity
+        """compute similarity at the requested layer(s) and return result."""
+        match self.which_layer:
+            case "classification":
+                return self._similarity_classification()
+            case "penultimate":
+                return self._similarity_penultimate()
+            case "all":
+                return self._similarity_all()
+            case _:
+                raise ValueError(f"unknown layer mode: {self.which_layer}")
 
-        elif self.which_layer == "penultimate":
-            self.activation = {}
-            self.detach_tensors = True
-            all_layers = self.group_all_layers()
-            all_layers_names = []
-            which_layer = -2
-            hook_lists = []
+    def _similarity_classification(self):
+        """compute cosine similarity on classification outputs."""
+        outputs = (self.model(self.tensors[0]), self.model(self.tensors[1]))
+        return compute_cosine_similarity(outputs)
 
-            for idx, i in enumerate(all_layers):
-                name = "{}: {}".format(idx, str.split(str(i), "(")[0])
-                all_layers_names.append(name)
-                hook_lists.append(i.register_forward_hook(self.get_activation(name)))
+    def _similarity_penultimate(self):
+        """compute cosine similarity on penultimate layer activations."""
+        all_layers = self._group_all_layers()
+        names, hooks = self._register_hooks(all_layers)
+        self.model(self.tensors[0])
+        output_0 = self.activation[names[-2]].flatten().unsqueeze(0)
+        self.model(self.tensors[1])
+        output_1 = self.activation[names[-2]].flatten().unsqueeze(0)
+        self._remove_hooks(hooks)
+        return compute_cosine_similarity((output_0, output_1))
 
-            self.model(self.tensors[0])
-            output_0 = self.activation[all_layers_names[which_layer]].flatten().unsqueeze(0)
-            self.model(self.tensors[1])
-            output_1 = self.activation[all_layers_names[which_layer]].flatten().unsqueeze(0)
-            similarity = compute_cosine_similarity((output_0, output_1))
-            return similarity
-        
-        elif self.which_layer == "penultimate_visualizer":
-            self.activation = {}
-            self.detach_tensors = True
-            all_layers = self.group_all_layers()
-            all_layers_names = []
-            which_layer = -2
-            hook_lists = []
+    def _similarity_all(self):
+        """compute cosine similarity at every layer."""
+        all_layers = self._group_all_layers()
+        names, hooks = self._register_hooks(all_layers)
+        self.model(self.tensors[0])
+        activations_0 = [self.activation[n].flatten().unsqueeze(0) for n in names]
+        self.model(self.tensors[1])
+        activations_1 = [self.activation[n].flatten().unsqueeze(0) for n in names]
+        self._remove_hooks(hooks)
+        return [
+            compute_cosine_similarity((activations_0[i], activations_1[i]))
+            for i in range(len(names))
+        ]
 
-            for idx, i in enumerate(all_layers):
-                name = "{}: {}".format(idx, str.split(str(i), "(")[0])
-                all_layers_names.append(name)
-                hook_lists.append(i.register_forward_hook(self.get_activation(name)))
+    def _register_hooks(self, all_layers) -> tuple[list[str], list]:
+        """register forward hooks on all leaf layers and return names and handles."""
+        self.activation = {}
+        names = []
+        handles = []
+        for idx, layer in enumerate(all_layers):
+            name = f"{idx}: {str(layer).split('(')[0]}"
+            names.append(name)
+            handles.append(layer.register_forward_hook(self._get_activation(name)))
+        return names, handles
 
-            self.model(self.tensors[0])
-            output_0 = self.activation[all_layers_names[which_layer]]
-            self.model(self.tensors[1])
-            output_1 = self.activation[all_layers_names[which_layer]]
-            return output_0, output_1
+    @staticmethod
+    def _remove_hooks(handles):
+        """remove all registered forward hook handles."""
+        for h in handles:
+            h.remove()
 
-        elif self.which_layer == "all":
-            self.activation = {}
-            self.detach_tensors = True
-            all_layers = self.group_all_layers()
-            all_layers_names = []
-            hook_lists = []
-
-            for idx, i in enumerate(all_layers):
-                name = "{}: {}".format(idx, str.split(str(i), "(")[0])
-                all_layers_names.append(name)
-                hook_lists.append(i.register_forward_hook(self.get_activation(name)))
-
-            self.model(self.tensors[0])
-            intermediate_activations_1 = [self.activation[i].flatten().unsqueeze(0) for i in self.activation.keys()]
-            self.model(self.tensors[1])
-            intermediate_activations_2 = [self.activation[i].flatten().unsqueeze(0) for i in self.activation.keys()]
-            similarities = [
-                compute_cosine_similarity((intermediate_activations_1[i], intermediate_activations_2[i]))
-                for i in range(len(self.activation))
-            ]
-
-            return similarities
-
-    def get_activation(self, name):
-        def hook(model, input, output):
-            self.activation[name] = output.detach() if self.detach_tensors else output
-
+    def _get_activation(self, name):
+        """return a hook function that captures layer output."""
+        def hook(_model, _input, output):
+            self.activation[name] = output.detach()
         return hook
 
-    def group_all_layers(self):
+    def _group_all_layers(self):
+        """flatten model hierarchy into a list of leaf layers."""
         all_layers = []
 
         def recursive_group(model):

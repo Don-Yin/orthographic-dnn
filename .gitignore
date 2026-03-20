@@ -4,6 +4,7 @@
 TASKS.json
 
 # data files
+src/data/
 
 # system
 .DS_Store

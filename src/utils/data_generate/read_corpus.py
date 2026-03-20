@@ -1,13 +1,8 @@
+"""read a word corpus from a text file, returning non-empty lines."""
+
 from pathlib import Path
 
 
-def read_corpus(path: Path):
-    corpus = open(path, "r").read()
-    corpus: list[str] = [w for w in corpus.split("\n") if w != ""]
-    corpus: list[str] = [w for w in corpus if len(w)]
-    return corpus
-
-
-if __name__ == "__main__":
-    corpus = read_corpus(Path("assets", "corpus.txt"))
-    print(len(corpus))
+def read_corpus(path: Path) -> list[str]:
+    """read words from a newline-delimited text file, filtering blanks."""
+    return [w for w in path.read_text().split("\n") if w]
