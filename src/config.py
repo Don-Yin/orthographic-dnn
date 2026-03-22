@@ -29,6 +29,7 @@ def _get_model_registry() -> dict[str, tuple]:
     global _MODEL_REGISTRY
     if _MODEL_REGISTRY is None:
         from torchvision import models
+
         _MODEL_REGISTRY = {
             "alexnet": (models.alexnet, models.AlexNet_Weights.DEFAULT),
             "densenet169": (models.densenet169, models.DenseNet169_Weights.DEFAULT),

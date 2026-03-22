@@ -1,4 +1,7 @@
 # Orthographic-DNN
+
+[![Dataset on HF](https://huggingface.co/datasets/huggingface/badges/resolve/main/dataset-on-hf-md.svg)](https://huggingface.co/datasets/DonYin/orthographic-dnn-priming)
+
 This is the code repository for the research project *[Convolutional Neural Networks Trained to Identify Words Provide a Good Account of Visual Form Priming Effects](https://link.springer.com/article/10.1007/s42113-023-00172-7)*
 
 [![Click to see Video Demo](src/assets/_demo.png)](https://youtu.be/PEvwzwo6gFM)
